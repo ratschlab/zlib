@@ -77,6 +77,8 @@ static free_func zfree = (free_func)0;
 
 void test_compress     (Byte *compr, uLong comprLen,
                             Byte *uncompr, uLong uncomprLen);
+void test_unaligned_matches(Byte *compr, uLong comprLen,
+                            Byte *uncompr, uLong uncomprLen);
 void test_gzio         (const char *fname,
                             Byte *uncompr, uLong uncomprLen);
 
@@ -101,6 +103,33 @@ void test_compress(Byte *compr, uLong comprLen, Byte *uncompr,
         exit(1);
     } else {
         printf("uncompress(): %s\n", (char *)uncompr);
+    }
+}
+
+/* ===========================================================================
+ * Exercise native-word comparisons at unaligned match positions.
+ */
+void test_unaligned_matches(Byte *compr, uLong comprLen, Byte *uncompr,
+                            uLong uncomprLen) {
+    Byte input[8192];
+    uInt i;
+    int level, err;
+
+    /* The odd repeat distance creates differently aligned internal matches. */
+    for (i = 0; i < sizeof(input); i++)
+        input[i] = i % 97 ? 'A' : (Byte)(i / 97);
+
+    for (level = 1; level <= 9; level++) {
+        uLong compressed = comprLen;
+        uLong restored = uncomprLen;
+        err = compress2(compr, &compressed, input, sizeof(input), level);
+        CHECK_ERR(err, "compress unaligned matches");
+        err = uncompress(uncompr, &restored, compr, compressed);
+        CHECK_ERR(err, "uncompress unaligned matches");
+        if (restored != sizeof(input) || memcmp(input, uncompr, sizeof(input))) {
+            fprintf(stderr, "bad unaligned match roundtrip\n");
+            exit(1);
+        }
     }
 }
 
@@ -545,6 +574,7 @@ int main(int argc, char *argv[]) {
     argc = strlen(argv[0]);
 #else
     test_compress(compr, comprLen, uncompr, uncomprLen);
+    test_unaligned_matches(compr, comprLen, uncompr, uncomprLen);
 
     test_gzio((argc > 1 ? argv[1] : TESTFILE),
               uncompr, uncomprLen);

@@ -129,26 +129,38 @@ static const config configuration_table[10] = {
 /* rank Z_BLOCK between Z_NO_FLUSH and Z_PARTIAL_FLUSH */
 #define RANK(f) (((f) * 2) - ((f) > 4 ? 9 : 0))
 
+/* Match positions are byte-aligned; avoid alignment and aliasing assumptions. */
+static uint32_t load32(const void *ptr) {
+    uint32_t value;
+    zmemcpy((Bytef *)&value, (const Bytef *)ptr, sizeof(value));
+    return value;
+}
+
+static uint64_t load64(const void *ptr) {
+    uint64_t value;
+    zmemcpy((Bytef *)&value, (const Bytef *)ptr, sizeof(value));
+    return value;
+}
+
 #ifdef __aarch64__
 
 #include <arm_neon.h>
 #include <arm_acle.h>
 static uint32_t hash_func(deflate_state *s, void* str) {
-    return __crc32cw(0, *(uint32_t*)str) & s->hash_mask;
+    return __crc32cw(0, load32(str)) & s->hash_mask;
 }
 
 #elif defined HAS_SSE42
 
 #include <immintrin.h>
 static uint32_t hash_func(deflate_state *s, void* str) {
-    return _mm_crc32_u32(0, *(uint32_t*)str) & s->hash_mask;
+    return _mm_crc32_u32(0, load32(str)) & s->hash_mask;
 }
 
 #else
 
 static uint32_t hash_func(deflate_state *s, void* str) {
-    uint32_t w;
-    zmemcpy(&w, str, sizeof(w));
+    uint32_t w = load32(str);
     // generic multiply-xor hash, using some magic numbers from xxhash.
     w *= 0x85ebca77u;
     w ^= w >> 19;
@@ -1156,8 +1168,8 @@ static uint32_t longest_match(deflate_state *s, IPos cur_match /* current match 
 
     register uint8_t *strend = s->window + s->strstart + MAX_MATCH;
     /* We optimize for a minimal match of four bytes */
-    register uint32_t scan_start = *(uint32_t*)scan;
-    register uint32_t scan_end   = *(uint32_t*)(scan+best_len-3);
+    register uint32_t scan_start = load32(scan);
+    register uint32_t scan_end   = load32(scan+best_len-3);
 
     /* The code is optimized for HASH_BITS >= 8 and MAX_MATCH-2 multiple of 16.
      * It is easy to get rid of this optimization if necessary.
@@ -1190,7 +1202,7 @@ static uint32_t longest_match(deflate_state *s, IPos cur_match /* current match 
         cont = 1;
         do {
             match = s->window + cur_match;
-            if (likely(*(uint32_t*)(match+best_len-3) != scan_end) || (*(uint32_t*)match != scan_start)) {
+            if (likely(load32(match+best_len-3) != scan_end) || (load32(match) != scan_start)) {
                 if ((cur_match = prev[cur_match & wmask]) > limit
                     && --chain_length != 0) {
                     continue;
@@ -1205,8 +1217,8 @@ static uint32_t longest_match(deflate_state *s, IPos cur_match /* current match 
 
         scan += 4, match+=4;
         do {
-            uint64_t sv = *(uint64_t*)(void*)scan;
-            uint64_t mv = *(uint64_t*)(void*)match;
+            uint64_t sv = load64(scan);
+            uint64_t mv = load64(match);
             uint64_t xor = sv ^ mv;
             if (xor) {
                 int match_byte = __builtin_ctzl(xor) / 8;
@@ -1231,7 +1243,7 @@ static uint32_t longest_match(deflate_state *s, IPos cur_match /* current match 
             s->match_start = cur_match;
             best_len = len;
             if (len >= nice_match) break;
-            scan_end = *(uint32_t*)(scan+best_len-3);
+            scan_end = load32(scan+best_len-3);
         }
     } while ((cur_match = prev[cur_match & wmask]) > limit
              && --chain_length != 0);
